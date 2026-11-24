@@ -1,4 +1,4 @@
-# Doom550D-6D
+# Doom6D
 
 Canon EOS 6D port of [Doom550D](https://github.com/lauris-nl/doom550d), a
 playable DOOM port for Magic Lantern.
@@ -38,7 +38,7 @@ The module must match the camera build. For a 6D.116 camera, use a
 Place the `module/` directory in a Magic Lantern source tree:
 
 ```sh
-cp -r doom550d-6d/module magiclantern/modules/doom550d
+cp -r doom6d/module magiclantern/modules/doom550d
 cd magiclantern
 make -C modules/doom550d DOOM_6D=1 -j4
 ```
@@ -107,3 +107,4 @@ AF-point key sharing, and the combined direction release event.
 
 GPL-2.0, matching upstream. Doom engine and WAD data remain subject to their
 own copyrights and licenses. No WAD or commercial game data is included.
+
