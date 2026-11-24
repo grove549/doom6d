@@ -25,6 +25,23 @@
 #include "m_config.h"
 #include "p_saveg.h"
 
+/*
+ * Standalone module builds do not receive CONFIG_6D (modules are normally
+ * camera-independent).  Build with "make DOOM_6D=1" for the 6D keymap; when
+ * the file is compiled as part of a 6D platform build, CONFIG_6D also works.
+ */
+#if defined(DOOM_6D) || defined(CONFIG_6D)
+#define DOOM_TARGET_6D 1
+#endif
+
+#ifndef ASIF_MAX_VOL
+#if defined(DOOM_TARGET_6D)
+#define ASIF_MAX_VOL 10
+#else
+#define ASIF_MAX_VOL 5
+#endif
+#endif
+
 #define DOOM_W 720
 #define DOOM_H 480
 #define DOOM_X ((720 - DOOM_W) / 2)
@@ -39,6 +56,7 @@
 
 static CONFIG_INT("games.doom550d.wad", doom_wad_choice, -1);
 CONFIG_INT("games.doom550d.debug", doom_debug_enabled, 0);
+CONFIG_INT("games.doom550d.volume", doom_volume, 5);
 
 #define KEYQUEUE_SIZE 64
 
@@ -49,6 +67,12 @@ static volatile uint32_t doom_start_ms = 0;
 static volatile uint32_t doom_tick_count = 0;
 static volatile uint32_t doom_draw_count = 0;
 static volatile int zoom_run_pressed = 0;
+#if defined(DOOM_TARGET_6D)
+/* 6D has no zoom-out button; AF point selection toggles run instead. */
+static volatile int run_toggled = 0;
+/* Last cardinal direction queued from the 6D multi-controller. */
+static unsigned char sixd_dir_key = 0;
+#endif
 static char doom_wad_files[DOOM_MAX_WAD_FILES][FIO_MAX_PATH_LENGTH];
 static int doom_wad_file_count = 0;
 static int doom_wad_scan_done = 0;
@@ -309,6 +333,9 @@ static void release_game_keys(void)
     release_key(KEY_RSHIFT);
     release_key(KEY_FIRE);
     release_key(KEY_USE);
+#if defined(DOOM_TARGET_6D)
+    sixd_dir_key = 0;
+#endif
 }
 
 static void update_pulsed_keys(void)
@@ -319,6 +346,8 @@ static void update_pulsed_keys(void)
         KEY_DOWNARROW,
         KEY_LEFTARROW,
         KEY_RIGHTARROW,
+        KEY_STRAFE_L,
+        KEY_STRAFE_R,
         KEY_FIRE,
         KEY_USE,
         KEY_ESCAPE,
@@ -341,7 +370,11 @@ static void update_pulsed_keys(void)
 
 static void update_run_key(void)
 {
+#if defined(DOOM_TARGET_6D)
+    if (doom_running && !menuactive && (zoom_run_pressed || run_toggled))
+#else
     if (doom_running && !menuactive && zoom_run_pressed)
+#endif
         queue_key(1, KEY_RSHIFT);
     else
         release_key(KEY_RSHIFT);
@@ -358,6 +391,11 @@ void DG_ResetInput(void)
     memset(key_queue, 0, sizeof(key_queue));
     memset(key_state, 0, sizeof(key_state));
     memset(pulse_deadline, 0, sizeof(pulse_deadline));
+#if defined(DOOM_TARGET_6D)
+    zoom_run_pressed = 0;
+    run_toggled = 0;
+    sixd_dir_key = 0;
+#endif
 }
 
 
@@ -904,6 +942,9 @@ static void doom550d_task(void *arg)
     doom_tick_count = 0;
     doom_draw_count = 0;
     zoom_run_pressed = 0;
+#if defined(DOOM_TARGET_6D)
+    run_toggled = 0;
+#endif
     cheat_trash_first_ms = 0;
     cheat_trash_count = 0;
     doom_log_checkpoint("task-start");
@@ -1006,6 +1047,7 @@ static MENU_SELECT_FUNC(doom550d_start)
     }
 
     doom_task_active = 1;
+    doom_audio_ml_set_volume(doom_volume);
 
     task_create(
         "doom_task",
@@ -1142,6 +1184,14 @@ static struct menu_entry doom550d_menu[] =
                 .help2 = "Keep OFF for normal play; enable before reproducing a bug.",
             },
             {
+                .name = "Volume",
+                .priv = &doom_volume,
+                .min = 1,
+                .max = ASIF_MAX_VOL,
+                .help = "Doom audio output volume.",
+                .help2 = "1 = quiet, ASIF_MAX_VOL (10 on 6D) = loudest.",
+            },
+            {
                 .name = "Clear Doom logs",
                 .select = doom_logs_clear,
                 .help = "Delete only ML/LOGS/DOOM*.LOG files.",
@@ -1159,6 +1209,48 @@ static struct menu_entry doom550d_menu[] =
  * MODULE_KEY_UNPRESS_UDLR. Op de 550D bestaan echter vier afzonderlijke
  * raw events; daarmee kunnen we echte hold/release-besturing maken.
  */
+#if defined(DOOM_TARGET_6D)
+/*
+ * Canon EOS 6D (DIGIC 5) raw GUI codes, uit platform/6D.116/gui.h.
+ *
+ * De 6D stuurt geen losse UNPRESS_UP/DOWN/LEFT/RIGHT events: bij het
+ * loslaten van de multi-controller komt alleen UNPRESS_UDLR (0x36).
+ * Daarom houden we een richting ingedrukt tot dat event binnenkomt.
+ * De 6D heeft ook geen zoom-out knop; de AF-punt-knop (0x0F) wordt
+ * gebruikt om hardlopen aan/uit te zetten.
+ */
+#define DOOM_BGMT_PRESS_UP          0x2e
+#define DOOM_BGMT_PRESS_UP_RIGHT    0x2f
+#define DOOM_BGMT_PRESS_RIGHT       0x30
+#define DOOM_BGMT_PRESS_DOWN_RIGHT  0x31
+#define DOOM_BGMT_PRESS_DOWN        0x32
+#define DOOM_BGMT_PRESS_LEFT        0x34
+#define DOOM_BGMT_PRESS_UP_LEFT     0x35
+#define DOOM_BGMT_PRESS_DOWN_LEFT   0x1c
+#define DOOM_BGMT_UNPRESS_UDLR      0x36
+
+#define DOOM_BGMT_WHEEL_UP          0x00
+#define DOOM_BGMT_WHEEL_DOWN        0x01
+#define DOOM_BGMT_WHEEL_LEFT        0x02
+#define DOOM_BGMT_WHEEL_RIGHT       0x03
+
+#define DOOM_BGMT_PRESS_SET         0x04
+#define DOOM_BGMT_UNPRESS_SET       0x05
+#define DOOM_BGMT_MENU              0x06
+#define DOOM_BGMT_INFO              0x07
+#define DOOM_BGMT_PLAY              0x0b
+#define DOOM_BGMT_TRASH             0x0d
+#define DOOM_BGMT_AF_POINT          0x0f
+#define DOOM_BGMT_PRESS_ZOOM_IN     0x12
+#define DOOM_BGMT_UNPRESS_ZOOM_IN   0x13
+#define DOOM_BGMT_Q                 0x1d
+#define DOOM_BGMT_LIGHT             0x20
+
+#define DOOM_BGMT_PRESS_HALFSHUTTER    0x50
+#define DOOM_BGMT_UNPRESS_HALFSHUTTER  0x51
+#define DOOM_BGMT_PRESS_FULLSHUTTER    0x52
+#define DOOM_BGMT_UNPRESS_FULLSHUTTER  0x53
+#else
 #define DOOM_BGMT_PRESS_RIGHT    0x1a
 #define DOOM_BGMT_UNPRESS_RIGHT  0x1b
 #define DOOM_BGMT_PRESS_LEFT     0x1c
@@ -1184,6 +1276,195 @@ static struct menu_entry doom550d_menu[] =
 #define DOOM_BGMT_UNPRESS_HALFSHUTTER 0x40
 #define DOOM_BGMT_PRESS_FULLSHUTTER   0x41
 #define DOOM_BGMT_UNPRESS_FULLSHUTTER 0x42
+#endif
+
+#if defined(DOOM_TARGET_6D)
+static void doom6d_press_direction(unsigned char key)
+{
+    if (menuactive)
+    {
+        tap_key(key);
+        return;
+    }
+
+    /* Some 6D modes repeat the same press event while the controller is
+     * held.  Keep the existing key down in that case, otherwise the
+     * repeated up/down pair would make movement stutter. */
+    if (sixd_dir_key == key)
+        return;
+
+    /* A different direction was pressed; drop the old one first. */
+    release_direction_keys();
+    queue_key(1, key);
+    sixd_dir_key = key;
+}
+
+static void doom6d_press_diagonal(unsigned char first, unsigned char second)
+{
+    if (menuactive)
+        return;
+
+    release_direction_keys();
+    queue_key(1, first);
+    queue_key(1, second);
+    sixd_dir_key = 0;
+}
+
+static int doom6d_handle_key(unsigned int key)
+{
+    switch (key)
+    {
+        case DOOM_BGMT_PRESS_UP:
+            doom6d_press_direction(KEY_UPARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_DOWN:
+            doom6d_press_direction(KEY_DOWNARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_LEFT:
+            doom6d_press_direction(KEY_LEFTARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_RIGHT:
+            doom6d_press_direction(KEY_RIGHTARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_UP_LEFT:
+            doom6d_press_diagonal(KEY_UPARROW, KEY_LEFTARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_UP_RIGHT:
+            doom6d_press_diagonal(KEY_UPARROW, KEY_RIGHTARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_DOWN_LEFT:
+            doom6d_press_diagonal(KEY_DOWNARROW, KEY_LEFTARROW);
+            return 1;
+
+        case DOOM_BGMT_PRESS_DOWN_RIGHT:
+            doom6d_press_diagonal(KEY_DOWNARROW, KEY_RIGHTARROW);
+            return 1;
+
+        case DOOM_BGMT_UNPRESS_UDLR:
+            release_direction_keys();
+            sixd_dir_key = 0;
+            return 1;
+
+        case DOOM_BGMT_PRESS_SET:
+            if (menuactive)
+                tap_key(KEY_ENTER);
+            else
+                queue_key(1, KEY_FIRE);
+            return 1;
+
+        case DOOM_BGMT_UNPRESS_SET:
+            release_key(KEY_FIRE);
+            return 1;
+
+        case DOOM_BGMT_MENU:
+            if ((uint32_t)get_ms_clock() - doom_start_ms < 5000)
+                return 1;
+            release_game_keys();
+            tap_key(KEY_ESCAPE);
+            return 1;
+
+        case DOOM_BGMT_INFO:
+            if (menuactive)
+                tap_key(KEY_ESCAPE);
+            else
+                tap_key(KEY_TAB);
+            return 1;
+
+        case DOOM_BGMT_PLAY:
+            if (!menuactive)
+                pulse_key(KEY_USE, 140);
+            return 1;
+
+        case DOOM_BGMT_PRESS_ZOOM_IN:
+            zoom_run_pressed = 1;
+            update_run_key();
+            return 1;
+
+        case DOOM_BGMT_UNPRESS_ZOOM_IN:
+            zoom_run_pressed = 0;
+            update_run_key();
+            return 1;
+
+        case DOOM_BGMT_AF_POINT:
+            /* 6D has no zoom-out; tap AF point to toggle run.
+             * Also clear a possibly stuck zoom-in press. */
+            zoom_run_pressed = 0;
+            run_toggled = !run_toggled;
+            update_run_key();
+            return 1;
+
+        /* Rear / quick-control dial:
+         * left/right = strafe, up/down = previous/next weapon. */
+        case DOOM_BGMT_WHEEL_LEFT:
+            if (!menuactive)
+                pulse_key(KEY_STRAFE_L, 140);
+            return 1;
+
+        case DOOM_BGMT_WHEEL_RIGHT:
+            if (!menuactive)
+                pulse_key(KEY_STRAFE_R, 140);
+            return 1;
+
+        case DOOM_BGMT_WHEEL_UP:
+            if (!menuactive)
+                cycle_owned_weapon(-1);
+            return 1;
+
+        case DOOM_BGMT_WHEEL_DOWN:
+            if (!menuactive)
+                cycle_owned_weapon(1);
+            return 1;
+
+        case DOOM_BGMT_Q:
+            release_game_keys();
+            tap_key('y');
+            return 1;
+
+        case DOOM_BGMT_TRASH:
+        {
+            uint32_t now = (uint32_t)get_ms_clock();
+
+            if (cheat_trash_count == 0
+             || (uint32_t)(now - cheat_trash_first_ms) > 1200)
+            {
+                cheat_trash_first_ms = now;
+                cheat_trash_count = 1;
+            }
+            else
+            {
+                cheat_trash_count++;
+            }
+
+            if (cheat_trash_count >= 3)
+            {
+                cheat_trash_count = 0;
+                cheat_trash_first_ms = 0;
+                release_game_keys();
+                doom_cheat_menu_request_open();
+            }
+
+            return 1;
+        }
+
+        case DOOM_BGMT_PRESS_HALFSHUTTER:
+        case DOOM_BGMT_UNPRESS_HALFSHUTTER:
+        case DOOM_BGMT_PRESS_FULLSHUTTER:
+        case DOOM_BGMT_UNPRESS_FULLSHUTTER:
+            /* Canon autofocus / shutter stays below the module. */
+            release_key(KEY_FIRE);
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+#endif
 
 static unsigned int doom550d_keypress_raw(unsigned int context)
 {
@@ -1226,6 +1507,9 @@ static unsigned int doom550d_keypress_raw(unsigned int context)
         return 0;
     }
 
+#if defined(DOOM_TARGET_6D)
+    return doom6d_handle_key(key) ? 0 : 1;
+#else
     switch (key)
     {
         case DOOM_BGMT_PRESS_UP:
@@ -1381,6 +1665,7 @@ static unsigned int doom550d_keypress_raw(unsigned int context)
         default:
             return 1;
     }
+#endif
 }
 
 static unsigned int doom550d_init(void)

@@ -16,6 +16,13 @@
 
 #define AUDIO_RATE 48000
 #define AUDIO_VOLUME 5
+#ifndef ASIF_MAX_VOL
+#if defined(DOOM_6D) || defined(CONFIG_6D)
+#define ASIF_MAX_VOL 10
+#else
+#define ASIF_MAX_VOL 5
+#endif
+#endif
 #define BUFFER_SAMPLES 4096
 #define SFX_CHANNELS 16
 #define MUS_CHANNELS 16
@@ -69,6 +76,7 @@ typedef struct
 
 static int16_t buffers[2][BUFFER_SAMPLES];
 static int16_t music_buffer[BUFFER_SAMPLES];
+static int audio_volume = AUDIO_VOLUME;
 static sfx_channel_t sfx[SFX_CHANNELS];
 static sfx_cache_t *cache_list;
 static mus_state_t mus;
@@ -381,10 +389,16 @@ static void next(void *ctx)
     next_buffer = !next_buffer;
 }
 
+void doom_audio_ml_set_volume(int volume)
+{
+    if (volume < 1) volume = 1;
+    if (volume > ASIF_MAX_VOL) volume = ASIF_MAX_VOL;
+    audio_volume = volume;
+}
+
 static int audio_start(void)
 {
-    if (audio_running) return 1;
-    if (beep_playing)
+    if (audio_running) return 1;    if (beep_playing)
     {
         printf("doom550d: Canon audio output is already in use\n");
         return 0;
@@ -404,7 +418,7 @@ static int audio_start(void)
     MEM(0xC0920210) = 4;
     PowerAudioOutput();
     audio_configure(1);
-    SetAudioVolumeOut(AUDIO_VOLUME);
+    SetAudioVolumeOut(audio_volume);
     StartASIFDMADAC(buffers[0], sizeof(buffers[0]), buffers[1],
                     sizeof(buffers[1]), next, NULL);
     return 1;

@@ -91,3 +91,11 @@ shutdown.
 
 This module is only for the Canon EOS 550D with firmware 1.0.9. It remains
 experimental; back up the SD card before installation.
+
+Canon EOS 6D keymap
+-------------------
+
+This tree also contains a compile-time 6D input map. Build it with
+``make DOOM_6D=1`` and see ``../README-6D.md`` for the control scheme.
+The 6D build has been tested on a Canon EOS 6D with ML 6D.116; it is not a
+drop-in replacement for the 550D ``doom.mo``.

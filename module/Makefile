@@ -45,4 +45,11 @@ CFLAGS += \
     -I. \
     -Wno-error
 
+# Canon EOS 6D raw key codes.  Standalone module builds do not define
+# CONFIG_6D, so pass this explicitly:
+#   make DOOM_6D=1
+ifdef DOOM_6D
+CFLAGS += -DDOOM_6D
+endif
+
 .DEFAULT_GOAL := $(BUILD_DIR)/module_complete
